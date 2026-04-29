@@ -76,36 +76,41 @@ export default function App() {
 
   const startRecording = () => {
     if (state === 'listening' || state === 'thinking' || !supported) return;
-
-    // Прерываем озвучку если сейчас говорит
+    
+    // Прерываем озвучку и очищаем UI
     try { window.speechSynthesis.cancel(); } catch {}
     setError('');
     setResponse('');
     setTranscript('');
-
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+  
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.lang = 'ru-RU';
-    recognition.continuous = false;
+    recognition.continuous = false; // Одна фраза за раз
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-
+  
     let finalTranscript = '';
-
+  
     recognition.onstart = () => {
       setState('listening');
       startFakeLevel('listening');
     };
+  
     recognition.onresult = (e) => {
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalTranscript += t;
-        else interim += t;
+        if (e.results[i].isFinal) {
+          finalTranscript += t;
+        } else {
+          interim += t;
+        }
       }
+      // Показываем промежуточный текст пока говорим, финальный — когда готов
       setTranscript(finalTranscript || interim);
     };
+  
     recognition.onerror = (e) => {
       stopFakeLevel();
       console.error('SpeechRecognition error:', e.error);
@@ -114,17 +119,25 @@ export default function App() {
       else if (e.error !== 'aborted') setError(`Ошибка распознавания: ${e.error}`);
       setState('idle');
     };
+  
     recognition.onend = () => {
       stopFakeLevel();
-      const userText = finalTranscript.trim() || transcript.trim();
+      
+      // ✅ ИСПРАВЛЕНИЕ: Используем ТОЛЬКО подтверждённый финальный текст.
+      // Никаких fallback'ов на React-стейт, чтобы не тянуть старые данные.
+      const userText = finalTranscript.trim();
+      
       if (!userText) {
+        // Если речь не распознана или слишком короткая — просто возвращаемся в idle
+        setTranscript('');
         setState('idle');
         return;
       }
+  
       setTranscript(userText);
       submitToBackend(userText);
     };
-
+  
     recognitionRef.current = recognition;
     try {
       recognition.start();
