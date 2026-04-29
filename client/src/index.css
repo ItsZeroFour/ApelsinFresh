@@ -1,0 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@300;400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --orange: #FF5C00;
+  --orange-dim: #FF5C0022;
+  --orange-soft: #FF5C0011;
+  --dark: #0D0D0D;
+  --surface: #161616;
+  --surface2: #1F1F1F;
+  --border: #2A2A2A;
+  --text: #F0EDE8;
+  --muted: #888880;
+  --green: #00C97A;
+}
+
+html, body, #root {
+  height: 100%;
+  font-family: 'Onest', sans-serif;
+  background: var(--dark);
+  color: var(--text);
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
