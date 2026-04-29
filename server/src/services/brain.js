@@ -1,241 +1,270 @@
 // ============================================================
-// 🧠 МОЗГ "АПЕЛЬСИН" v4 — гибридный (rule + pseudo-AI)
+// Ультимативный "Мозг" Ларкинса v3.0 (Кодовое имя: Lazarus Core)
+// ============================================================
+// Полностью автономный NLP-движок без LLM. 
+// Включает:
+// - Исправление опечаток STT (Расстояние Левенштейна)
+// - Агрессивный стемминг для русского языка
+// - Скоринг совпадений (Fuzzy + Exact match)
+// - Полная база данных Apelsin Fresh
 // ============================================================
 
-import { getContext } from './knowledge.js';
-
-// ============================================================
-// 🧠 ПАМЯТЬ (контекст диалога)
-// ============================================================
-
-let memory = {
-  lastTopic: null,
-  lastIntent: null,
-};
-
-// ============================================================
-// 🎤 ОЧИСТКА ДЛЯ ОЗВУЧКИ
-// ============================================================
-
-function clean(text) {
-  return text
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\s+([,.!?])/g, '$1')
-    .trim();
-}
-
-// ============================================================
-// ⚡️ СТИЛЬ "АПЕЛЬСИН"
-// ============================================================
-
-function stylize(text, type = 'default') {
-  const endings = {
-    product: 'Ключ — формирование привычки.',
-    economics: 'Это напрямую растит LTV.',
-    growth: 'Это масштабируется через удержание.',
-    default: ''
-  };
-
-  return clean(text + ' ' + (endings[type]  ''));
-}
-
-// ============================================================
-// 💬 SMALLTALK
-// ============================================================
-
-const SMALLTALK = [
+const KNOWLEDGE_BASE = [
   {
-    keys: ['привет','хай','hello'],
-    answers: ['Я Апельсин. Задавайте вопрос.', 'На связи. Что интересно?']
+    id: 1,
+    title: "Философия и миссия",
+    importance: 5,
+    content: "Наша миссия — взломать автоматизм на кассе. У карты Апельсин есть кешбэк 7%, но люди платят по привычке другой картой. Мы превращаем скучную математику в дофаминовую петлю, делая оплату ежедневным ритуалом для зумеров от 18 до 25 лет.",
+    keywords: ["миссия", "цель", "зачем", "философия", "идея", "суть", "проблема", "вызов", "автоматизм", "привычка", "кешбэк", "дофамин"]
   },
   {
-    keys: ['кто ты','ты кто'],
-    answers: ['Я Апельсин. Голосовой эксперт Apelsin Fresh.']
+    id: 2,
+    title: "Анатомия продукта и Fresh Mix",
+    importance: 5,
+    content: "Работает так: вы платите картой Апельсин в X5. Данные чека парсятся, и продукты превращаются в 3D-объекты. Вы делаете интерактивный 'замес' в приложении, получаете цифровой артефакт 'Fresh' и обмениваете его на персональный оффер для следующей покупки.",
+    keywords: ["как работает", "механика", "продукт", "замес", "fresh mix", "фреш микс", "анатомия", "цикл", "loop", "использование", "что делать", "3d", "артефакт", "оффер", "действие"]
   },
   {
-    keys: ['спасибо'],
-    answers: ['Пожалуйста.']
+    id: 3,
+    title: "Экономика CAPEX (Инвестиции)",
+    importance: 5,
+    content: "Инвестиции в запуск — 1 миллиард 638 миллионов рублей. Из них 25 миллионов на разработку за 6 месяцев силами 17 специалистов, 4 миллиона на инфраструктуру и 1.6 миллиарда на маркетинг, чтобы привлечь первый миллион активных пользователей. CAC — 1600 рублей.",
+    keywords: ["capex", "капекс", "инвестиции", "затраты на старт", "сколько вложили", "стоимость разработки", "затраты", "миллиард", "cac", "стоимость привлечения", "бюджет"]
+  },
+  {
+    id: 4,
+    title: "Экономика OPEX (Ежемесячные траты)",
+    importance: 4,
+    content: "Ежемесячные траты — 515 миллионов рублей. Из них 320 миллионов идет на маркетинг удержания, 180 миллионов на выплату кешбэка и скидки, около 3 миллионов на команду поддержки и 12 миллионов на безопасность и комиссии.",
+    keywords: ["opex", "опекс", "ежемесячные траты", "расходы в месяц", "поддержка", "сколько тратите", "retention", "удержание", "стоимость поддержки"]
+  },
+  {
+    id: 5,
+    title: "Прогноз доходности и окупаемость",
+    importance: 5,
+    content: "В оптимистичном сценарии мы ждем рост частоты покупок на 20%. Рост выручки X5 составит 5 миллиардов, чистая прибыль — 811 миллионов, а окупаемость займет всего 2 месяца. В консервативном сценарии окупаемость составит 59 месяцев при прибыли 27 миллионов.",
+    keywords: ["доход", "окупаемость", "прогноз", "сценарий", "выручка", "прибыль", "когда окупится", "рентабельность", "цифры", "pnl", "заработок", "рост"]
+  },
+  {
+    id: 6,
+    title: "Целевая аудитория (Психология)",
+    importance: 4,
+    content: "Мы целимся в зумеров. 72% из них — как 'Стася', покупают под влиянием TikTok ради вау-эффекта и контента. Остальные — 'Сережи', рационалисты и крипто-энтузиасты, для которых Fresh Coins — это понятный цифровой актив и геймификация выгоды.",
+    keywords: ["ца", "целевая аудитория", "клиенты", "для кого", "кому", "зумеры", "стася", "сережа", "психология", "поколение z", "gen z", "кто пользуется"]
+  },
+  {
+    id: 7,
+    title: "Техническая реализуемость",
+    importance: 4,
+    content: "Мы не меняем ядро банка, мы — интерфейсный слой. Под капотом API X5.Tech для данных чеков и CRM X5 Club. MVP сделали за 6 недель. Юридическая чистота и безопасность сделок обеспечена интеграцией через A-Token от Альфа-Банка.",
+    keywords: ["технологии", "стек", "реализация", "интеграция", "x5", "альфа банк", "api", "архитектура", "безопасность", "a-token", "a token", "как написано", "бэкенд"]
+  },
+  {
+    id: 8,
+    title: "Валидация и Тракшн",
+    importance: 4,
+    content: "Мы проверили спрос: записали вирусный трек 'Замешай свой Fresh' для TikTok, где зумеры ищут новинки. А наш fake-door бот подтвердил: аудитория готова переходить на карту Апельсин ради игровых механик и цифровых дропов.",
+    keywords: ["валидация", "тракшн", "проверка", "доказательства", "тесты", "tiktok", "тикток", "fake door", "бот", "спрос", "почему взлетит"]
+  },
+  {
+    id: 9,
+    title: "Дорожная карта (Масштабирование)",
+    importance: 3,
+    content: "Со второго квартала запускаем 'Fresh Market' — витрину для обмена дропами, где X5 выступает гарантом. Также вводим 'Fresh Coins' — внутреннюю валюту для оплаты подписок и еды, и 'Healthy Mode' для геймификации покупки здоровых продуктов.",
+    keywords: ["планы", "дорожная карта", "roadmap", "масштабирование", "что дальше", "будущее", "маркет", "market", "healthy", "coins", "валюта", "развитие"]
+  },
+  {
+    id: 10,
+    title: "Q&A: Азартные игры",
+    importance: 5,
+    content: "Это не лотерея и не казино. Базовая ценность карты в виде кешбэка 7% остается неизменной для всех. Редкость выпадающего артефакта Fresh лишь усиливает базовый оффер в рамках строгих промо-лимитов сети X5.",
+    keywords: ["казино", "азартные игры", "лотерея", "гемблинг", "законно", "риски", "рандом", "рулетка"]
+  },
+  {
+    id: 11,
+    title: "Q&A: Крипта и юридические риски",
+    importance: 5,
+    content: "В MVP это просто цифровые коллекционные предметы. Fresh Coins — это полностью закрытая внутренняя валюта без возможности вывода в реальные фиатные деньги. Никаких юридических рисков и нарушений закона о ЦФА здесь нет.",
+    keywords: ["крипта", "криптовалюта", "цфа", "токены", "блокчейн", "закон", "налоги", "вывод денег", "юридические"]
   }
 ];
 
-function trySmalltalk(q) {
-  const text = q.toLowerCase();
+const SMALLTALK = [
+  {
+    keywords: ["привет", "здравствуй", "хай", "hello", "добрый"],
+    answers: ["Привет! Я Ларкинс, ваш проводник в мир Apelsin Fresh. Раньше я был серым и ворчливым, а теперь замешал свой первый фреш и готов отвечать на вопросы жюри!"]
+  },
+  {
+    keywords: ["кто ты", "представься", "твое имя", "как зовут", "ты кто"],
+    answers: ["Я Ларкинс — голосовой эксперт проекта Apelsin Fresh. Знаю всё про наши инвестиции, зумеров и то, как мы взламываем привычки на кассе."]
+  },
+  {
+    keywords: ["спасибо", "благодарю", "супер", "отлично", "молодец"],
+    answers: ["Всегда пожалуйста! Давайте сделаем карту Апельсин номером один."]
+  },
+  {
+    keywords: ["пока", "до свидания", "завершить"],
+    answers: ["До встречи! Не забудьте замешать свой фреш после покупки!"]
+  }
+];
 
+const FALLBACKS = [
+  "Отличный вопрос! Точную цифру лучше уточнить у команды после питча — я не хочу гадать и называть примерные данные.",
+  "На этот счет у нас есть детальные расчеты. Я передам слово CEO или CTO после презентации.",
+  "В моем текущем датасете нет точного ответа, но команда с радостью развернет эту тему на сессии Q&A."
+];
+
+const STOPWORDS = new Set(['и','а','но','или','что','как','где','когда','почему','зачем','это','тот','та','вы','ты','я','мы','на','в','с','к','от','до','из','за','по','о','у','не','ни','же','ли','бы','б','ведь','вот','уж','есть','быть','был','мне','тебе','нас','ваш','их','его','её','там','тут','здесь','очень','просто','только','ещё','уже','делать','сказать','расскажи','скажи','подскажи']);
+
+const SYNONYMS = {
+  'миссия': ['цель', 'зачем', 'идея', 'философия'],
+  'деньги': ['выручка', 'доход', 'кеш', 'бабки', 'финансы', 'прибыль', 'инвестиции'],
+  'клиент': ['зумер', 'пользователь', 'юзер', 'аудитория', 'ца', 'стася', 'сережа'],
+  'крипта': ['токен', 'блокчейн', 'койн', 'монета', 'цфа'],
+  'разработка': ['технологии', 'код', 'апи', 'стек', 'архитектура'],
+  'азарт': ['казино', 'рулетка', 'лотерея', 'гемблинг'],
+  'будущее': ['планы', 'дорожная карта', 'roadmap', 'развитие', 'дальше']
+};
+
+// ============================================================
+// NLP УТИЛИТЫ
+// ============================================================
+
+// 1. Алгоритм Левенштейна для исправления ошибок STT
+function levenshtein(a, b) {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
+  for (let i = 0; i <= a.length; i += 1) matrix[0][i] = i;
+  for (let j = 0; j <= b.length; j += 1) matrix[j][0] = j;
+  for (let j = 1; j <= b.length; j += 1) {
+    for (let i = 1; i <= a.length; i += 1) {
+      const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[j][i] = Math.min(
+        matrix[j][i - 1] + 1,
+        matrix[j - 1][i] + 1,
+        matrix[j - 1][i - 1] + indicator
+      );
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+// 2. Стемминг
+function stem(token) {
+  if (token.length <= 4) return token;
+  const endings = ['иями','ями','ами','ыми','ого','его','ому','ему','ыми','ими','ой','ей','ом','ем','ах','ях','ов','ев','ий','ый','ая','яя','ое','ее','и','ы','а','я','е','о','у','ю', 'ть', 'ти', 'ться'];
+  for (const e of endings) {
+    if (token.endsWith(e) && token.length - e.length >= 3) {
+      return token.slice(0, -e.length);
+    }
+  }
+  return token;
+}
+
+// 3. Токенизация и нормализация
+function tokenizeAndNormalize(text) {
+  const tokens = (text || '').toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/i).filter(t => t.length > 2 && !STOPWORDS.has(t));
+  
+  return tokens.map(token => {
+    // Проверяем синонимы
+    for (const [canonical, syns] of Object.entries(SYNONYMS)) {
+      if (token === canonical || syns.includes(token)) return stem(canonical);
+      // Проверка опечаток в синонимах (расстояние <= 1 для длинных слов)
+      if (token.length > 4) {
+        for (const syn of syns) {
+          if (levenshtein(token, syn) <= 1) return stem(canonical);
+        }
+      }
+    }
+    return stem(token);
+  });
+}
+
+// ============================================================
+// ЯДРО ОБРАБОТКИ
+// ============================================================
+
+function trySmalltalk(question) {
+  const q = question.toLowerCase();
   for (const rule of SMALLTALK) {
-    for (const k of rule.keys) {
-      if (text.includes(k)) {
-        return rule.answers[Math.floor(Math.random() * rule.answers.length)];
+    for (const kw of rule.keywords) {
+      // Fuzzy поиск для smalltalk (допускаем 1 опечатку для слов > 4 букв)
+      const qTokens = q.split(' ');
+      for (const qt of qTokens) {
+        if (qt === kw || (qt.length > 4 && kw.length > 4 && levenshtein(qt, kw) <= 1)) {
+          return rule.answers[Math.floor(Math.random() * rule.answers.length)];
+        }
       }
     }
   }
   return null;
 }
 
-// ============================================================
-// 🎯 INTENTS (можно несколько)
-// ============================================================
+function tryIntentMatch(question) {
+  const qTokens = tokenizeAndNormalize(question);
+  if (qTokens.length === 0) return null;
 
-const INTENTS = [
-  { id: 'product', keys: ['что это','что такое','продукт','сервис','как работает'] },
-  { id: 'economics', keys: ['деньги','зарабатываете','выручка','ltv','cac','чек'] },
-  { id: 'market', keys: ['рынок','tam','объем'] },
-  { id: 'audience', keys: ['клиент','аудитория','для кого'] },
-  { id: 'growth', keys: ['рост','масштаб','привлечение','маркетинг'] },
-  { id: 'team', keys: ['команда','кто делает'] },
-  { id: 'roadmap', keys: ['планы','дальше','roadmap'] },
-];
+  let bestScore = 0;
+  let bestEntry = null;
 
-// ============================================================
-// 🔍 ПОИСК ИНТЕНТОВ (multi)
-// ============================================================
-
-function detectIntents(q) {
-  const text = q.toLowerCase();
-  const found = [];
-
-  for (const intent of INTENTS) {
-    for (const key of intent.keys) {
-      if (text.includes(key)) {
-        found.push(intent.id);
-        break;
+  for (const entry of KNOWLEDGE_BASE) {
+    let score = 0;
+    const entryKeywords = entry.keywords.map(kw => tokenizeAndNormalize(kw)).flat();
+    
+    for (const qt of qTokens) {
+      let matched = false;
+      for (const ekw of entryKeywords) {
+        // Точное совпадение стеммы
+        if (qt === ekw) {
+          score += 2;
+          matched = true;
+          break;
+        }
+        // Fuzzy совпадение стеммы (сглаживание ошибок STT)
+        if (qt.length >= 4 && ekw.length >= 4 && levenshtein(qt, ekw) <= 1) {
+          score += 1.5;
+          matched = true;
+          break;
+        }
       }
+      
+      // Доп. очки, если слово есть в заголовке
+      const titleTokens = tokenizeAndNormalize(entry.title);
+      if (titleTokens.includes(qt)) {
+        score += 3; 
+      }
+    }
+
+    // Умножаем на важность интента (из конфига)
+    score = score * (entry.importance / 5);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestEntry = entry;
     }
   }
 
-  return found.length ? found : ['fallback'];
-}
-
-// ============================================================
-// 📚 ДОСТАЕМ ЗНАНИЯ
-// ============================================================
-
-function getRelevantKnowledge(question) {
-  const kb = getContext('', 100);
-
-  // простой скоринг
-  const scored = kb.map(entry => {
-    let score = 0;
-    const q = question.toLowerCase();
-
-    if (q.includes(entry.title.toLowerCase())) score += 5;
-    if (q.includes(entry.category?.toLowerCase())) score += 3;
-
-    return { entry, score };
-  });
-
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 2)
-    .map(x => x.entry.content)
-    .join(' ');
-}
-
-// ============================================================
-// 🧠 ГЕНЕРАЦИЯ ОТВЕТА (без LLM)
-// ============================================================
-
-function generateAnswer(intents, context) {
-
-  let base = context;
-
-  if (!base) {
-    return fallback();
+  // Порог отсечения, чтобы не выдавать рандом
+  if (bestScore >= 1.5 && bestEntry) {
+    return bestEntry.content;
   }
-
-  // усиливаем по типу
-  if (intents.includes('economics')) {
-    return stylize(base, 'economics');
-  }
-
-  if (intents.includes('growth')) {
-    return stylize(base, 'growth');
-  }
-
-  if (intents.includes('product')) {
-    return stylize(base, 'product');
-  }
-
-  return stylize(base);
+  return null;
 }
 
-// ============================================================
-// 🤖 LLM (опционально — включи когда хочешь)
-// ============================================================
+// Главная функция-экспорт
+export function answer(question) {
+  const q = (question || '').trim();
+  if (!q) return FALLBACKS[0];
 
-async function generateWithLLM(question, context) {
-  if (!process.env.OPENAI_API_KEY) return null;
+  // 1. Проверка на Smalltalk
+  const smalltalkResponse = trySmalltalk(q);
+  if (smalltalkResponse) return smalltalkResponse;
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `
-Ты Апельсин.
-Отвечай как эксперт стартапа.
-Коротко: 1-3 предложения.
-Всегда усиливай бизнес-смыслом.
-Используй цифры если есть.
-`
-        },
-        {
-          role: 'user',
-          content: question + "\n\nКонтекст:\n" + context
-        }
-      ]
-    })
-  });
+  // 2. Умный поиск по базе знаний (Fuzzy + Stem + Score)
+  const intentResponse = tryIntentMatch(q);
+  if (intentResponse) return intentResponse;
 
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content  null;
-}
-
-// ============================================================
-// 🧯 FALLBACK
-// ============================================================
-
-function fallback() {
-  const answers = [
-    'Точные детали лучше уточнить у команды после питча.',
-    'Конкретику дам после — важно не искажать цифры.',
-    'Хороший вопрос, но отвечу точно позже.'
-  ];
-  return answers[Math.floor(Math.random() * answers.length)];
-}
-
-// ============================================================
-// 🚀 ГЛАВНАЯ ФУНКЦИЯ
-// ============================================================
-
-export async function answer(question) {
-
-  if (!question) return fallback();
-
-  // 1. smalltalk
-  const small = trySmalltalk(question);
-  if (small) return small;
-
-  // 2. intents
-  const intents = detectIntents(question);
-
-  // 3. контекст
-  const context = getRelevantKnowledge(question);
-
-  // 4. пробуем LLM
-  const llm = await generateWithLLM(question, context);
-  if (llm) return clean(llm);
-
-  // 5. fallback генерация
-  const result = generateAnswer(intents, context);
-
-  // 6. сохраняем память
-  memory.lastIntent = intents[0];
-
-  return result;
+  // 3. Fallback, если ничего не найдено
+  return FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
 }
