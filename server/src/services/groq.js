@@ -1,41 +1,69 @@
-import Groq, { toFile } from 'groq-sdk';
+// Гибридный сервис:
+//   • LLM  → Groq (llama-3.3-70b)        — быстрый "мозг"
+//   • STT  → Deepgram Nova-2             — обходит IP-блок Groq Audio на VPS
+//
+// Почему так: Groq Audio API режется по IP на некоторых VPS (Cloudflare 403),
+// тогда как chat.completions работает нормально. Deepgram доступен с любого
+// VPS, при регистрации даёт $200 бесплатных кредитов.
+//
+// Имя файла оставлено прежним (groq.js), чтобы не трогать импорты в routes/.
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+import Groq from 'groq-sdk';
+import { createClient } from '@deepgram/sdk';
 
-const LLM_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-const STT_MODEL = process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo';
+// --- Groq client (lazy) ---
+let _groq = null;
+function getGroq() {
+  if (_groq) return _groq;
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY не задан в .env');
+  _groq = new Groq({ apiKey });
+  return _groq;
+}
+
+// --- Deepgram client (lazy) ---
+let _dg = null;
+function getDeepgram() {
+  if (_dg) return _dg;
+  const apiKey = process.env.DEEPGRAM_API_KEY;
+  if (!apiKey) throw new Error('DEEPGRAM_API_KEY не задан в .env');
+  _dg = createClient(apiKey);
+  return _dg;
+}
+
+const getLlmModel = () => process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const getDgModel = () => process.env.DEEPGRAM_MODEL || 'nova-2';
 
 /**
- * Распознавание речи. Принимает Buffer с аудио + имя файла (для определения формата).
- * MediaRecorder в браузере шлёт webm/ogg/mp4 — Whisper-turbo принимает всё.
+ * Транскрипция через Deepgram. Принимает Buffer.
+ * Nova-2 хорошо работает с русским, latency ~200-400мс.
  */
-export async function transcribe(audioBuffer, filename = 'audio.webm') {
-  const file = await toFile(audioBuffer, filename);
-  const result = await groq.audio.transcriptions.create({
-    file,
-    model: STT_MODEL,
+export async function transcribe(audioBuffer /*, filename — не нужен Deepgram-у */) {
+  const dg = getDeepgram();
+  const { result, error } = await dg.listen.prerecorded.transcribeFile(audioBuffer, {
+    model: getDgModel(),
     language: 'ru',
-    response_format: 'json',
-    // temperature: 0 даёт самый стабильный результат для коротких фраз
-    temperature: 0,
+    smart_format: true,
+    punctuate: true,
   });
-  return result.text || '';
+  if (error) {
+    throw new Error(`Deepgram: ${error.message || error}`);
+  }
+  return result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
 }
 
 /**
- * Стриминг LLM. Возвращает async iterable с дельтами текста.
- * messages — формат OpenAI: [{role, content}, ...]
+ * Стриминг LLM через Groq.
  */
 export async function* streamChat(messages) {
-  const stream = await groq.chat.completions.create({
-    model: LLM_MODEL,
+  const stream = await getGroq().chat.completions.create({
+    model: getLlmModel(),
     messages,
     stream: true,
     temperature: 0.6,
-    max_tokens: 400, // ответы короткие — это голосовой Q&A
+    max_tokens: 400,
     top_p: 0.9,
   });
-
   for await (const chunk of stream) {
     const delta = chunk.choices?.[0]?.delta?.content;
     if (delta) yield delta;
