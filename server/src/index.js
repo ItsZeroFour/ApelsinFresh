@@ -29,19 +29,18 @@ app.use('/api/chat', chatRoute);
 
 const PORT = process.env.PORT || 3001;
 
-// Sanity-check на ключи — лучше упасть на старте, чем в рантайме во время питча
+// Sanity-check — теперь нужен только ElevenLabs (STT в браузере, "мозг" локальный)
 const missing = [];
-if (!process.env.GROQ_API_KEY) missing.push('GROQ_API_KEY');
-if (!process.env.DEEPGRAM_API_KEY) missing.push('DEEPGRAM_API_KEY');
+if (!process.env.ELEVENLABS_API_KEY) missing.push('ELEVENLABS_API_KEY');
+if (!process.env.ELEVENLABS_VOICE_ID) missing.push('ELEVENLABS_VOICE_ID');
 if (missing.length) {
   console.error(`[!] Не заданы переменные в .env: ${missing.join(', ')}`);
-  console.error('    Скопируй .env.example в .env и заполни.');
   process.exit(1);
 }
 
 app.listen(PORT, () => {
   console.log(`🍊  Larkins server слушает на http://localhost:${PORT}`);
-  console.log(`    LLM:  Groq · ${process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'}`);
-  console.log(`    STT:  Deepgram · ${process.env.DEEPGRAM_MODEL || 'nova-2'}`);
+  console.log(`    STT:  Web Speech API (в браузере)`);
+  console.log(`    Brain: rule-based (knowledge.json)`);
   console.log(`    TTS:  ElevenLabs · ${process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5'}`);
 });

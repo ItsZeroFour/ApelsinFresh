@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import VoiceOrb from './components/VoiceOrb.jsx';
-import { Recorder } from './lib/recorder.js';
 import { AudioQueue } from './lib/audioQueue.js';
 import { postSSE } from './lib/sse.js';
 
@@ -11,96 +10,151 @@ export default function App() {
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [error, setError] = useState('');
+  const [supported, setSupported] = useState(true);
 
-  const recorderRef = useRef(null);
   const audioQueueRef = useRef(null);
-  const historyRef = useRef([]); // [{role, content}]
+  const recognitionRef = useRef(null);
   const abortRef = useRef(null);
+  // Чтобы анимировать орб во время listening, симулируем уровень
+  const fakeLevelRafRef = useRef(null);
 
-  // Инициализируем audio queue один раз
+  // Инициализация
   useEffect(() => {
+    // 1. Проверяем поддержку Web Speech API
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSupported(false);
+      setError('Распознавание речи не поддерживается в этом браузере. Используй Chrome или Edge.');
+      return;
+    }
+
+    // 2. Audio queue для воспроизведения mp3 от ElevenLabs
     audioQueueRef.current = new AudioQueue({
-      onLevel: (l) => {
-        // setLevel вызывается часто — оборачиваем для производительности
-        setLevel(l);
-      },
+      onLevel: (l) => setLevel(l),
       onPlayingChange: (isPlaying) => {
         setState((prev) => {
           if (isPlaying) return 'speaking';
-          // конец воспроизведения → idle (если только мы не пишем уже новый вопрос)
           return prev === 'speaking' ? 'idle' : prev;
         });
       },
     });
+
     return () => {
       audioQueueRef.current?.stop();
       abortRef.current?.abort();
+      stopFakeLevel();
+      try { recognitionRef.current?.abort(); } catch {}
     };
   }, []);
 
-  /** START — пользователь зажал кнопку */
-  const startRecording = async () => {
-    if (state === 'listening' || state === 'thinking') return;
+  /** Симуляция уровня для анимации орба во время прослушивания */
+  const startFakeLevel = () => {
+    let phase = 0;
+    const tick = () => {
+      phase += 0.05;
+      // имитация дыхания + случайные пики (как будто пользователь говорит)
+      const base = 0.3 + Math.sin(phase) * 0.2;
+      const noise = Math.random() * 0.15;
+      setLevel(Math.min(1, base + noise));
+      fakeLevelRafRef.current = requestAnimationFrame(tick);
+    };
+    fakeLevelRafRef.current = requestAnimationFrame(tick);
+  };
+  const stopFakeLevel = () => {
+    if (fakeLevelRafRef.current) cancelAnimationFrame(fakeLevelRafRef.current);
+    fakeLevelRafRef.current = null;
+    setLevel(0);
+  };
 
-    // Если Ларкинс ещё говорит — прерываем и слушаем юзера
+  /** START — пользователь зажал кнопку */
+  const startRecording = () => {
+    if (state === 'listening' || state === 'thinking' || !supported) return;
+
     audioQueueRef.current?.stop();
     abortRef.current?.abort();
-
     setError('');
     setResponse('');
     setTranscript('');
 
-    try {
-      const recorder = new Recorder({ onLevel: setLevel });
-      recorderRef.current = recorder;
-      await recorder.start();
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'ru-RU';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    let finalTranscript = '';
+
+    recognition.onstart = () => {
       setState('listening');
-    } catch (err) {
-      setError('Не удалось получить доступ к микрофону. Проверь разрешения в браузере.');
-      console.error(err);
+      startFakeLevel();
+    };
+    recognition.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTranscript += t;
+        else interim += t;
+      }
+      setTranscript(finalTranscript || interim);
+    };
+    recognition.onerror = (e) => {
+      stopFakeLevel();
+      console.error('SpeechRecognition error:', e.error);
+      if (e.error === 'no-speech') {
+        setError('Не услышал. Попробуй ещё раз.');
+      } else if (e.error === 'not-allowed') {
+        setError('Доступ к микрофону запрещён. Разреши в настройках браузера.');
+      } else if (e.error === 'aborted') {
+        // юзер сам прервал — не ошибка
+      } else {
+        setError(`Ошибка распознавания: ${e.error}`);
+      }
       setState('idle');
-    }
-  };
-
-  /** STOP — пользователь отпустил кнопку */
-  const stopAndSubmit = async () => {
-    const recorder = recorderRef.current;
-    if (!recorder) return;
-    recorderRef.current = null;
-
-    setState('thinking');
-    const blob = await recorder.stop();
-
-    // Если запись слишком короткая (<300мс) — игнорим, скорее всего случайный тап
-    if (blob.size < 4000) {
-      setState('idle');
-      return;
-    }
-
-    try {
-      // 1. Транскрибируем
-      const form = new FormData();
-      form.append('audio', blob, 'voice.webm');
-      const trRes = await fetch('/api/transcribe', { method: 'POST', body: form });
-      if (!trRes.ok) throw new Error('Не удалось распознать речь');
-      const { text } = await trRes.json();
-      const userText = (text || '').trim();
+    };
+    recognition.onend = () => {
+      stopFakeLevel();
+      const userText = finalTranscript.trim() || transcript.trim();
       if (!userText) {
         setState('idle');
         return;
       }
       setTranscript(userText);
+      submitToBackend(userText);
+    };
 
-      // 2. Стримим ответ
-      historyRef.current.push({ role: 'user', content: userText });
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch (err) {
+      console.error(err);
+      setError('Не удалось запустить распознавание');
+      setState('idle');
+    }
+  };
 
+  /** STOP — пользователь отпустил кнопку */
+  const stopRecording = () => {
+    const r = recognitionRef.current;
+    if (!r) return;
+    try {
+      r.stop(); // отправит onend с накопленным результатом
+    } catch {}
+  };
+
+  /** Отправка распознанного текста на бэк */
+  const submitToBackend = async (userText) => {
+    setState('thinking');
+    try {
       const ac = new AbortController();
       abortRef.current = ac;
 
       let assistantText = '';
       await postSSE(
         '/api/chat',
-        { message: userText, history: historyRef.current.slice(0, -1) },
+        { message: userText },
         (event, data) => {
           if (event === 'text' && data?.delta) {
             assistantText += data.delta;
@@ -109,13 +163,6 @@ export default function App() {
             audioQueueRef.current?.push(data.mp3);
           } else if (event === 'error') {
             setError(data?.message || 'Ошибка генерации');
-          } else if (event === 'done') {
-            // Сохраняем ответ в историю
-            historyRef.current.push({ role: 'assistant', content: assistantText });
-            // Обрезаем историю до 6 последних сообщений
-            if (historyRef.current.length > 6) {
-              historyRef.current = historyRef.current.slice(-6);
-            }
           }
         },
         ac.signal,
@@ -129,18 +176,11 @@ export default function App() {
     }
   };
 
-  // PointerEvents — единый код для touch и mouse
   const buttonHandlers = {
-    onPointerDown: (e) => {
-      e.preventDefault();
-      startRecording();
-    },
-    onPointerUp: () => stopAndSubmit(),
-    onPointerCancel: () => stopAndSubmit(),
-    onPointerLeave: () => {
-      // если палец увели за кнопку — всё равно отправляем
-      if (state === 'listening') stopAndSubmit();
-    },
+    onPointerDown: (e) => { e.preventDefault(); startRecording(); },
+    onPointerUp: () => stopRecording(),
+    onPointerCancel: () => stopRecording(),
+    onPointerLeave: () => { if (state === 'listening') stopRecording(); },
   };
 
   return (
@@ -155,25 +195,13 @@ export default function App() {
       </div>
 
       <div className="caption">
-        {transcript && (
-          <p className="caption-q">
-            «{transcript}»
-          </p>
-        )}
-        {response && (
-          <p className="caption-a">
-            {/* {response} */}
-          </p>
-        )}
+        {transcript && <p className="caption-q">«{transcript}»</p>}
+        {response && <p className="caption-a">{response}</p>}
         {!transcript && !response && state === 'idle' && (
           <p className="caption-hint">Зажми кнопку и задай вопрос</p>
         )}
-        {state === 'listening' && (
-          <p className="caption-hint">Слушаю…</p>
-        )}
-        {state === 'thinking' && !response && (
-          <p className="caption-hint">Думаю…</p>
-        )}
+        {state === 'listening' && <p className="caption-hint">Слушаю…</p>}
+        {state === 'thinking' && !response && <p className="caption-hint">Думаю…</p>}
         {error && <p className="caption-error">{error}</p>}
       </div>
 
@@ -181,6 +209,7 @@ export default function App() {
         <button
           className={`mic-btn mic-${state}`}
           {...buttonHandlers}
+          disabled={!supported}
           aria-label="Удерживай чтобы говорить"
         >
           <MicIcon />
