@@ -1,92 +1,70 @@
-// Rule-based "мозг" Ларкинса v2 — без LLM.
-//
-// Слои обработки (в порядке приоритета):
-//   1. SMALLTALK    — приветствия, прощания, благодарности, идентичность
-//   2. INTENT MAP   — вопрос → конкретная запись knowledge.json по фразам
-//   3. FUZZY MATCH  — стеммированный bag-of-words скоринг
-//   4. FALLBACK
-//
-// ВАЖНО: \b в regex с кириллицей в JavaScript работает не как ожидаешь —
-// он считает кириллицу не-словом. Поэтому используем lookahead/lookbehind
-// или просто ищем substring без word boundary.
+// ============================================================
+// 🧠 МОЗГ "АПЕЛЬСИН" v4 — гибридный (rule + pseudo-AI)
+// ============================================================
 
 import { getContext } from './knowledge.js';
 
 // ============================================================
-//  ОЧИСТКА ОТВЕТА ДЛЯ ОЗВУЧКИ
+// 🧠 ПАМЯТЬ (контекст диалога)
 // ============================================================
-function cleanForSpeech(text) {
+
+let memory = {
+  lastTopic: null,
+  lastIntent: null,
+};
+
+// ============================================================
+// 🎤 ОЧИСТКА ДЛЯ ОЗВУЧКИ
+// ============================================================
+
+function clean(text) {
   return text
-    // Срезаем плейсхолдеры [...] — в knowledge.json они для примера
-    .replace(/\[[^\]]*\]/g, '')
-    // Slash-перечисления "идея / прототип / MVP" → оставляем "идея"
-    .replace(/(\S+)\s*\/\s*\S+(?:\s*\/\s*\S+)*/g, '$1')
-    // Висящие тире и двоеточия после вырезанных плейсхолдеров
-    .replace(/[—–-]+\s*([.,;:!?]|$)/g, '$1')
-    .replace(/:\s*([.,;])/g, '$1')
-    // двойные пробелы и пробелы перед знаками
-    .replace(/\s+([,.!?;:])/g, '$1')
     .replace(/\s{2,}/g, ' ')
-    // повторяющиеся знаки
-    .replace(/[.,;]{2,}/g, '.')
-    .replace(/\.\s*\./g, '.')
+    .replace(/\s+([,.!?])/g, '$1')
     .trim();
 }
 
 // ============================================================
-//  СЛОЙ 1 — SMALLTALK
+// ⚡️ СТИЛЬ "АПЕЛЬСИН"
 // ============================================================
-//
-// Используем (?:^|[^\p{L}]) и (?:$|[^\p{L}]) вместо \b — это работает с кириллицей.
+
+function stylize(text, type = 'default') {
+  const endings = {
+    product: 'Ключ — формирование привычки.',
+    economics: 'Это напрямую растит LTV.',
+    growth: 'Это масштабируется через удержание.',
+    default: ''
+  };
+
+  return clean(text + ' ' + (endings[type]  ''));
+}
+
+// ============================================================
+// 💬 SMALLTALK
+// ============================================================
+
 const SMALLTALK = [
   {
-    keywords: ['привет','здравствуй','здарова','хай','hi','hello','добрый день','добрый вечер','доброе утро'],
-    answers: [
-      'Привет! Я Ларкинс, отвечаю по проекту Apelsin Fresh. Спрашивайте.',
-      'Здравствуйте! Готов отвечать на вопросы по продукту. Что интересует?',
-    ],
+    keys: ['привет','хай','hello'],
+    answers: ['Я Апельсин. Задавайте вопрос.', 'На связи. Что интересно?']
   },
   {
-    keywords: ['пока','до свидания','увидимся','всего доброго','bye','спокойной ночи'],
-    answers: ['До встречи!', 'Всего доброго!', 'Удачи!'],
+    keys: ['кто ты','ты кто'],
+    answers: ['Я Апельсин. Голосовой эксперт Apelsin Fresh.']
   },
   {
-    keywords: ['спасибо','благодарю','thanks','спс'],
-    answers: ['Пожалуйста.', 'Не за что.', 'Рад помочь.'],
-  },
-  {
-    keywords: ['как дела','как ты','как настроение','как сам'],
-    answers: [
-      'Всё отлично, готов отвечать на вопросы про Apelsin Fresh.',
-      'В рабочем режиме. Что хотите узнать?',
-    ],
-  },
-  {
-    keywords: ['кто ты','как тебя зовут','представься','твоё имя','твое имя','ты кто'],
-    answers: [
-      'Меня зовут Ларкинс. Я голосовой эксперт проекта Apelsin Fresh.',
-      'Я Ларкинс, отвечаю по продукту Apelsin Fresh.',
-    ],
-  },
-  {
-    keywords: ['что ты умеешь','что умеешь','что можешь','твои возможности','зачем ты'],
-    answers: [
-      'Отвечаю на вопросы про Apelsin Fresh: продукт, бизнес-модель, команда, рынок, клиенты. Спрашивайте.',
-    ],
-  },
-  {
-    keywords: ['тест','проверка','раз два три','слышишь меня','ты живой'],
-    answers: ['Слышу вас. Задавайте вопрос.', 'На связи. Что хотели узнать?'],
-  },
+    keys: ['спасибо'],
+    answers: ['Пожалуйста.']
+  }
 ];
 
-function trySmalltalk(question) {
-  const q = question.toLowerCase().replace(/ё/g, 'е');
+function trySmalltalk(q) {
+  const text = q.toLowerCase();
+
   for (const rule of SMALLTALK) {
-    for (const kw of rule.keywords) {
-      if (q.includes(kw)) {
-        const a = rule.answers[Math.floor(Math.random() * rule.answers.length)];
-        return a;
+    for (const k of rule.keys) {
+      if (text.includes(k)) {
+        return rule.answers[Math.floor(Math.random() * rule.answers.length)];
       }
     }
   }
@@ -94,225 +72,170 @@ function trySmalltalk(question) {
 }
 
 // ============================================================
-//  СЛОЙ 2 — INTENT MAP
+// 🎯 INTENTS (можно несколько)
 // ============================================================
-//
-// Теперь intents — это набор substring-фраз. Если хоть одна найдена в вопросе,
-// возвращаем content из knowledge.json по соответствующему ID.
-// Порядок важен — более специфичные интенты идут ВЫШЕ.
+
 const INTENTS = [
-  // Привлечение / маркетинг — ВЫШЕ "клиента", чтобы "как привлекаете клиентов"
-  // не падало в #20.
-  { id: 24, keywords: [
-    'привлекаете','привлечения','привлечение','привлекать',
-    'маркетинг','продвижение','продвигаете',
-    'каналы продаж','канал продаж','канал привлечения','каналы привлечения',
-    'воронка','лиды','откуда клиенты','как находите','seo','реклама','growth',
-  ]},
-  { id: 22, keywords: [
-    'конкурент','альтернатив','аналог','competitor','moat',
-    'чем вы лучше','чем ты лучше','чем отличаетесь','чем отличаешься',
-    'почему вы лучше','почему именно вы','преимущество','отличие',
-    'кто ещё делает','кто уже делает',
-  ]},
-  { id: 21, keywords: [
-    'размер рынка','объём рынка','объем рынка','tam','sam','som',
-    'насколько большой рынок','сколько денег на рынке','потенциал рынка',
-  ]},
-  { id: 23, keywords: [
-    'кейс','примеры клиентов','примеры использования','use case',
-    'кто использует','кто уже использует','traction','рост базы',
-    'сколько клиентов','сколько пользователей',
-  ]},
-  { id: 20, keywords: [
-    'целевая аудитория','целевой клиент','целевой сегмент','target',
-    'кто ваш клиент','кто твой клиент','для кого','кому продаёте','кому продаете',
-    'b2b','b2c','портрет клиента','портрет пользователя','icp','идеальный клиент',
-  ]},
-  { id: 13, keywords: [
-    'бизнес-модель','бизнес модель','как зарабатываете','как зарабатываешь','монетизация',
-    'как делаете деньги','сколько стоит','цена','цены','тариф','подписка',
-    'стоимость','прайс','юнит-экономика','юнит экономика','unit economics',
-    'cac','ltv','средний чек','mrr','arr','выручка',
-  ]},
-  { id: 14, keywords: [
-    'команда','сотрудник','сотрудники','сколько вас','сколько у вас в команде',
-    'основатель','основатели','founder','ceo','cto','кто работает',
-    'опыт команды','core team','кто за этим стоит',
-  ]},
-  { id: 15, keywords: [
-    'дорожная карта','roadmap','план','планы','планируете',
-    'что дальше','что потом','следующий шаг','следующие шаги',
-    'развитие','видение','через год','за квартал','долгосрочн',
-  ]},
-  { id: 12, keywords: [
-    'стек','технологии','на чём написан','на чем написан','на чём сделан','на чем сделан',
-    'на чём построен','на чем построен','архитектура','под капотом',
-    'какой фронт','какой бэк','какая бд','база данных','ai часть','ии часть',
-    'какая модель','какая нейросеть','технологический',
-  ]},
-  { id: 11, keywords: [
-    'стадия','этап','статус проекта','где вы сейчас','на каком этапе',
-    'когда запустились','когда стартанули','уже работает','уже запустили',
-    'mvp','прототип',
-  ]},
-  // ID=10 (что такое продукт) — самый общий, идёт ПОСЛЕДНИМ
-  { id: 10, keywords: [
-    'что за продукт','что такое продукт','что такое apelsin','что такое апельсин',
-    'что за apelsin','что за апельсин','в чём суть','в чем суть','чем занимаетесь',
-    'что вы делаете','что ты делаешь','расскажи про продукт','расскажи о продукте',
-    'опиши продукт','описание продукта','что за сервис','что за стартап','что за проект',
-    'расскажи про проект','расскажи о проекте','расскажи про сервис',
-  ]},
+  { id: 'product', keys: ['что это','что такое','продукт','сервис','как работает'] },
+  { id: 'economics', keys: ['деньги','зарабатываете','выручка','ltv','cac','чек'] },
+  { id: 'market', keys: ['рынок','tam','объем'] },
+  { id: 'audience', keys: ['клиент','аудитория','для кого'] },
+  { id: 'growth', keys: ['рост','масштаб','привлечение','маркетинг'] },
+  { id: 'team', keys: ['команда','кто делает'] },
+  { id: 'roadmap', keys: ['планы','дальше','roadmap'] },
 ];
 
-function tryIntent(question, kb) {
-  const q = question.toLowerCase().replace(/ё/g, 'е');
+// ============================================================
+// 🔍 ПОИСК ИНТЕНТОВ (multi)
+// ============================================================
+
+function detectIntents(q) {
+  const text = q.toLowerCase();
+  const found = [];
+
   for (const intent of INTENTS) {
-    for (const kw of intent.keywords) {
-      if (q.includes(kw)) {
-        const entry = kb.find((e) => e.id === intent.id);
-        if (entry) return entry.content;
+    for (const key of intent.keys) {
+      if (text.includes(key)) {
+        found.push(intent.id);
+        break;
       }
     }
   }
-  return null;
+
+  return found.length ? found : ['fallback'];
 }
 
 // ============================================================
-//  СЛОЙ 3 — FUZZY MATCH (резерв)
+// 📚 ДОСТАЕМ ЗНАНИЯ
 // ============================================================
 
-const STOPWORDS = new Set([
-  'и','а','но','или','что','как','где','когда','почему','зачем',
-  'это','этот','эта','эти','тот','та','то','те','такой','такая',
-  'вы','ты','я','мы','он','она','они','оно','свой','своя','своё','свои',
-  'на','в','во','с','со','к','ко','от','до','из','за','для','по','при','о','об','у',
-  'не','ни','же','ли','бы','б','ведь','вот','уж',
-  'есть','быть','был','была','было','были','будет','будут',
-  'мне','мной','тебе','тобой','нас','наш','наша','наше','наши',
-  'ваш','ваша','ваше','ваши','их','его','её','ему','ей',
-  'там','тут','здесь','туда','сюда','оттуда','отсюда','куда','откуда',
-  'очень','просто','только','ещё','уже','также','тоже','даже',
-  'один','одна','одно','два','три',
-  'делать','сделать','говорить','сказать','видеть','знать','хочу','хотите',
-  'расскажи','скажи','подскажи','можно','нужно',
-]);
-
-const SYNONYMS = {
-  'продукт': ['сервис', 'приложение', 'платформа', 'апельсин', 'apelsin'],
-  'клиент': ['пользователь', 'покупатель', 'юзер', 'user', 'аудитория'],
-  'команда': ['сотрудник', 'основател', 'founder', 'основатель'],
-  'конкурент': ['альтернатива', 'аналог', 'competitor'],
-  'модель': ['монетизация', 'заработок', 'выручка', 'доход'],
-  'стадия': ['этап', 'статус'],
-  'рынок': ['отрасль', 'индустрия', 'ниша'],
-};
-
-function tokenize(text) {
-  return (text || '')
-    .toLowerCase()
-    .replace(/ё/g, 'е')
-    .split(/[^a-zа-я0-9]+/i)
-    .filter((t) => t && t.length >= 3 && !STOPWORDS.has(t));
-}
-
-function stem(token) {
-  if (token.length <= 4) return token;
-  const endings = [
-    'иями','ями','ами','ыми','ого','его','ому','ему','ыми','ими',
-    'ой','ей','ом','ем','ах','ях','ов','ев','ий','ый','ая','яя','ое','ее',
-    'и','ы','а','я','е','о','у','ю',
-  ];
-  for (const e of endings) {
-    if (token.endsWith(e) && token.length - e.length >= 4) {
-      return token.slice(0, -e.length);
-    }
-  }
-  return token;
-}
-
-function normalizeWithSynonyms(stemmed) {
-  for (const [canonical, syns] of Object.entries(SYNONYMS)) {
-    for (const syn of syns) {
-      if (stemmed.startsWith(stem(syn))) return stem(canonical);
-    }
-  }
-  return stemmed;
-}
-
-function preprocess(text) {
-  return tokenize(text).map(stem).map(normalizeWithSynonyms);
-}
-
-function tryFuzzy(question, kb) {
-  const qTokens = preprocess(question);
-  if (qTokens.length === 0) return null;
-
-  let bestScore = 0;
-  let bestEntry = null;
-
-  for (const entry of kb) {
-    const titleTokens = preprocess(entry.title);
-    const contentTokens = preprocess(entry.content);
-    const titleSet = new Set(titleTokens);
-    const contentSet = new Set(contentTokens);
-
-    let titleHits = 0;
-    let contentHits = 0;
-    for (const qt of qTokens) {
-      if (titleSet.has(qt)) titleHits++;
-      else if (contentSet.has(qt)) contentHits++;
-    }
-
-    if (titleHits === 0 && contentHits === 0) continue;
-
-    const score =
-      titleHits * 5 * (entry.importance || 1) +
-      contentHits * (entry.importance || 1);
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestEntry = entry;
-    }
-  }
-
-  if (!bestEntry || bestScore < 5) return null;
-  return bestEntry.content;
-}
-
-// ============================================================
-//  СЛОЙ 4 — FALLBACK
-// ============================================================
-
-const FALLBACKS = [
-  'По этой части лучше уточнить у команды после питча — не хочу путать цифры.',
-  'Точных данных под рукой нет. Передам команде, ответят детально.',
-  'Хороший вопрос — но конкретику дам отдельно, чтобы говорить точно.',
-];
-
-// ============================================================
-//  ГЛАВНАЯ ФУНКЦИЯ
-// ============================================================
-
-export function answer(question) {
-  const q = (question || '').trim();
-  if (!q) return FALLBACKS[0];
-
-  // 1. Smalltalk — без cleanForSpeech (тексты уже чистые)
-  const small = trySmalltalk(q);
-  if (small) return small;
-
+function getRelevantKnowledge(question) {
   const kb = getContext('', 100);
 
-  // 2. Intent map — точный матч по ключевым фразам
-  const intent = tryIntent(q, kb);
-  if (intent) return cleanForSpeech(intent);
+  // простой скоринг
+  const scored = kb.map(entry => {
+    let score = 0;
+    const q = question.toLowerCase();
 
-  // 3. Fuzzy match — резерв на нестандартные формулировки
-  const fuzzy = tryFuzzy(q, kb);
-  if (fuzzy) return cleanForSpeech(fuzzy);
+    if (q.includes(entry.title.toLowerCase())) score += 5;
+    if (q.includes(entry.category?.toLowerCase())) score += 3;
 
-  // 4. Fallback
-  return FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
+    return { entry, score };
+  });
+
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 2)
+    .map(x => x.entry.content)
+    .join(' ');
+}
+
+// ============================================================
+// 🧠 ГЕНЕРАЦИЯ ОТВЕТА (без LLM)
+// ============================================================
+
+function generateAnswer(intents, context) {
+
+  let base = context;
+
+  if (!base) {
+    return fallback();
+  }
+
+  // усиливаем по типу
+  if (intents.includes('economics')) {
+    return stylize(base, 'economics');
+  }
+
+  if (intents.includes('growth')) {
+    return stylize(base, 'growth');
+  }
+
+  if (intents.includes('product')) {
+    return stylize(base, 'product');
+  }
+
+  return stylize(base);
+}
+
+// ============================================================
+// 🤖 LLM (опционально — включи когда хочешь)
+// ============================================================
+
+async function generateWithLLM(question, context) {
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `
+Ты Апельсин.
+Отвечай как эксперт стартапа.
+Коротко: 1-3 предложения.
+Всегда усиливай бизнес-смыслом.
+Используй цифры если есть.
+`
+        },
+        {
+          role: 'user',
+          content: question + "\n\nКонтекст:\n" + context
+        }
+      ]
+    })
+  });
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content  null;
+}
+
+// ============================================================
+// 🧯 FALLBACK
+// ============================================================
+
+function fallback() {
+  const answers = [
+    'Точные детали лучше уточнить у команды после питча.',
+    'Конкретику дам после — важно не искажать цифры.',
+    'Хороший вопрос, но отвечу точно позже.'
+  ];
+  return answers[Math.floor(Math.random() * answers.length)];
+}
+
+// ============================================================
+// 🚀 ГЛАВНАЯ ФУНКЦИЯ
+// ============================================================
+
+export async function answer(question) {
+
+  if (!question) return fallback();
+
+  // 1. smalltalk
+  const small = trySmalltalk(question);
+  if (small) return small;
+
+  // 2. intents
+  const intents = detectIntents(question);
+
+  // 3. контекст
+  const context = getRelevantKnowledge(question);
+
+  // 4. пробуем LLM
+  const llm = await generateWithLLM(question, context);
+  if (llm) return clean(llm);
+
+  // 5. fallback генерация
+  const result = generateAnswer(intents, context);
+
+  // 6. сохраняем память
+  memory.lastIntent = intents[0];
+
+  return result;
 }
