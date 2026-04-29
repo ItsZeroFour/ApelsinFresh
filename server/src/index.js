@@ -29,18 +29,13 @@ app.use('/api/chat', chatRoute);
 
 const PORT = process.env.PORT || 3001;
 
-// Sanity-check — теперь нужен только ElevenLabs (STT в браузере, "мозг" локальный)
-const missing = [];
-if (!process.env.ELEVENLABS_API_KEY) missing.push('ELEVENLABS_API_KEY');
-if (!process.env.ELEVENLABS_VOICE_ID) missing.push('ELEVENLABS_VOICE_ID');
-if (missing.length) {
-  console.error(`[!] Не заданы переменные в .env: ${missing.join(', ')}`);
-  process.exit(1);
-}
+// Sanity-check — теперь вообще никаких внешних API не нужно.
+// STT в браузере, TTS в браузере, "мозг" локальный.
+// Оставляю только проверку что .env загрузился (на всякий случай).
 
 app.listen(PORT, () => {
   console.log(`🍊  Larkins server слушает на http://localhost:${PORT}`);
-  console.log(`    STT:  Web Speech API (в браузере)`);
+  console.log(`    STT:   Web Speech API (в браузере)`);
   console.log(`    Brain: rule-based (knowledge.json)`);
-  console.log(`    TTS:  ElevenLabs · ${process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5'}`);
+  console.log(`    TTS:   Web Speech Synthesis (в браузере)`);
 });

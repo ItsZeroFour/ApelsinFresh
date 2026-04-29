@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import VoiceOrb from './components/VoiceOrb.jsx';
-import { AudioQueue } from './lib/audioQueue.js';
-import { postSSE } from './lib/sse.js';
 
 export default function App() {
   // 'idle' | 'listening' | 'thinking' | 'speaking'
@@ -12,51 +10,60 @@ export default function App() {
   const [error, setError] = useState('');
   const [supported, setSupported] = useState(true);
 
-  const audioQueueRef = useRef(null);
   const recognitionRef = useRef(null);
-  const abortRef = useRef(null);
-  // Чтобы анимировать орб во время listening, симулируем уровень
   const fakeLevelRafRef = useRef(null);
+  // ru-RU голос для speechSynthesis выбираем один раз
+  const voiceRef = useRef(null);
 
-  // Инициализация
   useEffect(() => {
-    // 1. Проверяем поддержку Web Speech API
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+    const synthAvailable = 'speechSynthesis' in window;
+
+    if (!SpeechRecognition || !synthAvailable) {
       setSupported(false);
-      setError('Распознавание речи не поддерживается в этом браузере. Используй Chrome или Edge.');
+      setError('Голосовой режим работает в Chrome, Edge или Yandex Browser.');
       return;
     }
 
-    // 2. Audio queue для воспроизведения mp3 от ElevenLabs
-    audioQueueRef.current = new AudioQueue({
-      onLevel: (l) => setLevel(l),
-      onPlayingChange: (isPlaying) => {
-        setState((prev) => {
-          if (isPlaying) return 'speaking';
-          return prev === 'speaking' ? 'idle' : prev;
+    // Голоса грузятся асинхронно. Подписываемся на загрузку и выбираем русский.
+    const pickVoice = () => {
+      const voices = window.speechSynthesis.getVoices();
+      // Ищем лучший русский: сначала Microsoft / Google neural, потом любой ru
+      const ranked = voices
+        .filter((v) => /ru[-_]?RU|russian/i.test(`${v.lang} ${v.name}`))
+        .sort((a, b) => {
+          const score = (v) =>
+            (/Microsoft.*Pavel|Microsoft.*Dmitry/i.test(v.name) ? 100 : 0) +
+            (/Microsoft.*Irina|Microsoft.*Svetlana/i.test(v.name) ? 90 : 0) +
+            (/Google/i.test(v.name) ? 80 : 0) +
+            (/neural|natural/i.test(v.name) ? 50 : 0);
+          return score(b) - score(a);
         });
-      },
-    });
+      voiceRef.current = ranked[0] || null;
+      if (voiceRef.current) {
+        console.log('TTS voice:', voiceRef.current.name, voiceRef.current.lang);
+      }
+    };
+    pickVoice();
+    window.speechSynthesis.onvoiceschanged = pickVoice;
 
     return () => {
-      audioQueueRef.current?.stop();
-      abortRef.current?.abort();
-      stopFakeLevel();
       try { recognitionRef.current?.abort(); } catch {}
+      try { window.speechSynthesis.cancel(); } catch {}
+      stopFakeLevel();
     };
   }, []);
 
-  /** Симуляция уровня для анимации орба во время прослушивания */
-  const startFakeLevel = () => {
+  const startFakeLevel = (mode) => {
+    stopFakeLevel();
     let phase = 0;
     const tick = () => {
-      phase += 0.05;
-      // имитация дыхания + случайные пики (как будто пользователь говорит)
-      const base = 0.3 + Math.sin(phase) * 0.2;
+      phase += mode === 'listening' ? 0.05 : 0.09;
+      const base = mode === 'listening' ? 0.3 : 0.45;
+      const wave = Math.sin(phase) * 0.18 + Math.sin(phase * 2.1) * 0.1;
       const noise = Math.random() * 0.15;
-      setLevel(Math.min(1, base + noise));
+      setLevel(Math.min(1, base + wave + noise));
       fakeLevelRafRef.current = requestAnimationFrame(tick);
     };
     fakeLevelRafRef.current = requestAnimationFrame(tick);
@@ -67,12 +74,11 @@ export default function App() {
     setLevel(0);
   };
 
-  /** START — пользователь зажал кнопку */
   const startRecording = () => {
     if (state === 'listening' || state === 'thinking' || !supported) return;
 
-    audioQueueRef.current?.stop();
-    abortRef.current?.abort();
+    // Прерываем озвучку если сейчас говорит
+    try { window.speechSynthesis.cancel(); } catch {}
     setError('');
     setResponse('');
     setTranscript('');
@@ -89,7 +95,7 @@ export default function App() {
 
     recognition.onstart = () => {
       setState('listening');
-      startFakeLevel();
+      startFakeLevel('listening');
     };
     recognition.onresult = (e) => {
       let interim = '';
@@ -103,15 +109,9 @@ export default function App() {
     recognition.onerror = (e) => {
       stopFakeLevel();
       console.error('SpeechRecognition error:', e.error);
-      if (e.error === 'no-speech') {
-        setError('Не услышал. Попробуй ещё раз.');
-      } else if (e.error === 'not-allowed') {
-        setError('Доступ к микрофону запрещён. Разреши в настройках браузера.');
-      } else if (e.error === 'aborted') {
-        // юзер сам прервал — не ошибка
-      } else {
-        setError(`Ошибка распознавания: ${e.error}`);
-      }
+      if (e.error === 'no-speech') setError('Не услышал. Попробуй ещё раз.');
+      else if (e.error === 'not-allowed') setError('Разреши микрофон в настройках браузера.');
+      else if (e.error !== 'aborted') setError(`Ошибка распознавания: ${e.error}`);
       setState('idle');
     };
     recognition.onend = () => {
@@ -135,45 +135,62 @@ export default function App() {
     }
   };
 
-  /** STOP — пользователь отпустил кнопку */
   const stopRecording = () => {
     const r = recognitionRef.current;
     if (!r) return;
-    try {
-      r.stop(); // отправит onend с накопленным результатом
-    } catch {}
+    try { r.stop(); } catch {}
   };
 
-  /** Отправка распознанного текста на бэк */
+  /** Отправка распознанного текста на бэк → ответ → озвучка через speechSynthesis */
   const submitToBackend = async (userText) => {
     setState('thinking');
     try {
-      const ac = new AbortController();
-      abortRef.current = ac;
-
-      let assistantText = '';
-      await postSSE(
-        '/api/chat',
-        { message: userText },
-        (event, data) => {
-          if (event === 'text' && data?.delta) {
-            assistantText += data.delta;
-            setResponse(assistantText);
-          } else if (event === 'audio' && data?.mp3) {
-            audioQueueRef.current?.push(data.mp3);
-          } else if (event === 'error') {
-            setError(data?.message || 'Ошибка генерации');
-          }
-        },
-        ac.signal,
-      );
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userText }),
+      });
+      if (!res.ok) throw new Error(`server ${res.status}`);
+      const { text } = await res.json();
+      setResponse(text);
+      speak(text);
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        console.error(err);
-        setError('Что-то пошло не так. Попробуй ещё раз.');
-      }
+      console.error(err);
+      setError('Что-то пошло не так. Попробуй ещё раз.');
       setState('idle');
     }
+  };
+
+  /** Озвучка через нативный browser TTS */
+  const speak = (text) => {
+    if (!('speechSynthesis' in window)) {
+      setState('idle');
+      return;
+    }
+    try { window.speechSynthesis.cancel(); } catch {}
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'ru-RU';
+    utter.rate = 1.05;   // чуть быстрее обычного — энергичный эксперт
+    utter.pitch = 1.0;
+    utter.volume = 1.0;
+    if (voiceRef.current) utter.voice = voiceRef.current;
+
+    utter.onstart = () => {
+      setState('speaking');
+      startFakeLevel('speaking');
+    };
+    utter.onend = () => {
+      stopFakeLevel();
+      setState('idle');
+    };
+    utter.onerror = (e) => {
+      console.error('TTS error:', e);
+      stopFakeLevel();
+      setState('idle');
+    };
+
+    window.speechSynthesis.speak(utter);
   };
 
   const buttonHandlers = {
