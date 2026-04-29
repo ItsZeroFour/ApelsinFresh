@@ -1,6 +1,6 @@
 // ============================================================
-// Larkins v7.0 "Neural-Pitch Engine"
-// Автономная интеллектуальная модель для питчинга (Vanilla JS)
+// Larkins v7.0 "Cognitive Engine Pro"
+// Улучшенная интеллектуальная модель для питчинга (Vanilla JS)
 // ============================================================
 
 // ------------------------
@@ -14,14 +14,13 @@ const SYNONYM_MAP = {
   "вложили": ["инвестиции", "капитал", "бюджет", "траты", "capex", "расходы"],
   "окупаемость": ["прибыль", "возврат", "roi", "срок", "выход", "доход"],
   "безопасность": ["защита", "данные", "утечки", "риски", "шифрование", "токен"],
-  "аудитория": ["пользователи", "клиенты", "сегмент", "таргет", "рынок", "кто"],
-  "технологии": ["стек", "api", "архитектура", "инфраструктура", "бэкенд", "фронтенд"]
+  "аудитория": ["пользователи", "клиенты", "сегмент", "таргет", "рынок", "кто"]
 };
 
 function normalize(text) {
   return text
     .toLowerCase()
-    .replace(/[?!.,;:(){}[\]]/g, ' ')
+    .replace(/[?!.,;:(){}[\]"]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -34,7 +33,7 @@ function removeStopWords(tokens) {
   return tokens.filter(t => !STOP_WORDS.has(t));
 }
 
-// Простой эвристический стеммер для русского (суффиксное отсечение)
+// Упрощённый стеммер для русского (суффиксное отсечение)
 function stem(word) {
   if (word.length < 4) return word;
   const suffixes = [
@@ -53,16 +52,20 @@ function stem(word) {
 
 // Левенштейн (оставлен как базовый метрический слой)
 function getEditDistance(a, b) {
-  const m = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(0));
-  for (let i = 0; i <= a.length; i++) m[0][i] = i;
-  for (let j = 0; j <= b.length; j++) m[j][0] = j;
+  const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
+  for (let i = 0; i <= a.length; i++) matrix[0][i] = i;
+  for (let j = 0; j <= b.length; j++) matrix[j][0] = j;
   for (let j = 1; j <= b.length; j++) {
     for (let i = 1; i <= a.length; i++) {
-      const cost = a[i-1] === b[j-1] ? 0 : 1;
-      m[j][i] = Math.min(m[j][i-1]+1, m[j-1][i]+1, m[j-1][i-1]+cost);
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[j][i] = Math.min(
+        matrix[j][i - 1] + 1,
+        matrix[j - 1][i] + 1,
+        matrix[j - 1][i - 1] + cost
+      );
     }
   }
-  return m[b.length][a.length];
+  return matrix[b.length][a.length];
 }
 
 // ------------------------
@@ -83,7 +86,8 @@ function expandWithSynonyms(tokens) {
 function vectorize(text) {
   const raw = tokenize(text);
   const cleaned = removeStopWords(raw);
-  const expanded = expandWithSynonyms(cleaned.map(stem));
+  const stemmed = cleaned.map(stem);
+  const expanded = expandWithSynonyms(stemmed);
   const vec = {};
   for (const t of expanded) {
     vec[t] = (vec[t] || 0) + 1;
@@ -105,7 +109,7 @@ function cosineSimilarity(v1, v2) {
 // 3. КОНТЕКСТ И ПАМЯТЬ
 // ------------------------
 const STATE = {
-  history: [],           // {role:"user"|"assistant", text, intent, entities, score}
+  history: [],           // {role, text, intent, entities, score}
   activeIntent: null,
   lastEntities: {},
   turnCount: 0,
@@ -129,23 +133,23 @@ const KNOWLEDGE_BASE = [
   {
     id: "capex",
     intent: "finance",
-    patterns: ["сколько вложили", "какой capex", "инвестиции на старте", "затраты на запуск", "бюджет проекта", "куда ушли деньги"],
-    answer: "На старте мы заложили 1,638 млрд ₽. Основной объём (1,6 млрд) пойдёт в маркетинг и масштабирование, 25 млн — в разработку и инфраструктуру.",
+    patterns: ["сколько вложили", "какой capex", "инвестиции на старте", "затраты на запуск", "бюджет проекта"],
+    answer: "На старте мы заложили 1,638 млрд рублей. Основной объём (1,6 млрд) пойдёт в маркетинг и масштабирование, 25 млн — в разработку и инфраструктуру.",
     confidenceBoost: ["деньги", "вложили", "инвестиции", "капитал", "capex"],
     entities: { amount: ["млрд", "млн", "руб", "₽"], timeframe: ["старт", "запуск"] }
   },
   {
     id: "profit",
     intent: "finance",
-    patterns: ["когда окупитесь", "когда прибыль", "срок окупаемости", "roi", "выход в плюс", "маржинальность"],
-    answer: "При достижении плановых метрик окупаемость составляет ~2 месяца. Прогнозируемая выручка на горизонте 12 мес — 5 млрд ₽.",
+    patterns: ["когда окупитесь", "когда прибыль", "срок окупаемости", "roi", "выход в плюс"],
+    answer: "При достижении плановых метрик окупаемость составляет около 2 месяцев. Прогнозируемая выручка на горизонте 12 месяцев — 5 млрд рублей.",
     confidenceBoost: ["прибыль", "окупаемость", "roi", "доход"],
     entities: { timeframe: ["месяц", "год", "срок", "горизонт"] }
   },
   {
     id: "security",
     intent: "risk",
-    patterns: ["как защищаете данные", "безопасность", "утечки", "шифрование", "соответствие 152-фз", "риски взлома"],
+    patterns: ["как защищаете данные", "безопасность", "утечки", "шифрование", "соответствие 152-фз"],
     answer: "Используем банковский стандарт защиты: end-to-end шифрование, изолированные контуры, A-Token авторизация и регулярные аудиты. Риски утечки сведены к минимуму.",
     confidenceBoost: ["безопасность", "данные", "защита", "риски", "токен"],
     entities: { tech: ["шифрование", "токен", "аудит", "152-фз"] }
@@ -153,7 +157,7 @@ const KNOWLEDGE_BASE = [
   {
     id: "gambling",
     intent: "risk",
-    patterns: ["это казино", "это азарт", "лудомания", "игровые механики", "зависимость пользователей"],
+    patterns: ["это казино", "это азарт", "лудомания", "игровые механики"],
     answer: "Модель не является азартной. Пользователь получает гарантированную ценность за действия, а монетизация строится на прозрачной экономике, а не на вероятности выигрыша.",
     confidenceBoost: ["казино", "азарт", "лудомания", "игровые"],
     entities: { concept: ["гарантия", "прозрачность", "экономика"] }
@@ -162,7 +166,7 @@ const KNOWLEDGE_BASE = [
     id: "tech_stack",
     intent: "tech",
     patterns: ["на чём написано", "стек", "архитектура", "api", "инфраструктура", "высокая нагрузка"],
-    answer: "Микросервисная архитектура: Go для ядра, Node.js для API-шлюза, PostgreSQL + Redis для данных. Масштабируется горизонтально, выдерживает >50k RPS без деградации.",
+    answer: "Микросервисная архитектура: Go для ядра, Node.js для API-шлюза, PostgreSQL и Redis для данных. Масштабируется горизонтально, выдерживает более 50 тысяч запросов в секунду без деградации.",
     confidenceBoost: ["стек", "технологии", "api", "архитектура", "нагрузка"],
     entities: { tech: ["go", "node", "postgres", "redis", "rps"] }
   },
@@ -170,7 +174,7 @@ const KNOWLEDGE_BASE = [
     id: "audience",
     intent: "audience",
     patterns: ["кто ваш пользователь", "целевая аудитория", "таргет", "рынок", "для кого продукт"],
-    answer: "Фокус на B2C 18-35 лет с активным цифровым профилем. Дополнительно развиваем B2B-направление для интеграции в лояльность ритейла и финтеха.",
+    answer: "Фокус на B2C-аудиторию 18-35 лет с активным цифровым профилем. Дополнительно развиваем B2B-направление для интеграции в программы лояльности ритейла и финтеха.",
     confidenceBoost: ["пользователь", "аудитория", "таргет", "рынок", "клиенты"],
     entities: { demographic: ["возраст", "b2c", "b2b", "сегмент"] }
   }
@@ -181,10 +185,10 @@ const KNOWLEDGE_BASE = [
 // ------------------------
 function extractEntities(text) {
   const entities = {};
-  const numMatch = text.match(/(\d[\d\s.,]*)\s*(млрд|млн|тыс|тысяч|руб|₽|год|лет|мес|месяц|день|rps)/gi);
+  const numMatch = text.match(/(\d[\d\s.,]*)\s*(млрд|млн|тыс|тысяч|руб|₽|год|лет|мес|месяц|день)/gi);
   if (numMatch) entities.amounts = numMatch.map(s => s.trim());
 
-  const techMatch = text.match(/\b(go|node|java|python|postgres|redis|kafka|aws|k8s|api|rpc|grpc)\b/gi);
+  const techMatch = text.match(/\b(go|node|java|python|postgres|redis|kafka|aws|k8s|api)\b/gi);
   if (techMatch) entities.tech = [...new Set(techMatch.map(s => s.toLowerCase()))];
 
   const timeMatch = text.match(/\b(старт|запуск|месяц|год|квартал|срок|горизонт|сейчас|потом)\b/gi);
@@ -252,7 +256,7 @@ function scoreMatch(question, entry) {
   // 4. Context continuity
   score += getContinuityBonus(intent) * 0.8;
 
-  // 5. Entity overlap (если сущности из вопроса совпадают с ожидаемыми)
+  // 5. Entity overlap
   const qEnt = extractEntities(question);
   for (const cat in qEnt) {
     if (entry.entities && entry.entities[cat]) {
@@ -261,7 +265,7 @@ function scoreMatch(question, entry) {
     }
   }
 
-  return Math.min(score, 10.0); // Cap at 10
+  return Math.min(score, 10.0);
 }
 
 // ------------------------
@@ -290,13 +294,13 @@ function generateResponse(bestEntry, score, question) {
     answer += " Учитывая предыдущий вопрос по этой теме, могу добавить: метрики подтверждают устойчивость сценария.";
   }
 
-  // AI-стиль: структура + следующий шаг
-  return `${prefix}${answer.trim()}\n\n🔹 Хотите углубиться в цифры, техническую реализацию или юридические аспекты?`;
+  // Структурированный вывод без эмодзи
+  return `${prefix}${answer.trim()}\n\nХотите углубиться в цифры, техническую реализацию или юридические аспекты?`;
 }
 
 function clarifyOrFallback(intent, score) {
   const map = {
-    finance: "Экономика проекта зависит от сценария масштабирования. Уточните: вас интересует Unit-экономика, общий Capex или прогноз ROI?",
+    finance: "Экономика проекта зависит от сценария масштабирования. Уточните: вас интересует юнит-экономика, общий Capex или прогноз ROI?",
     tech: "Технический стек оптимизирован под нагрузку. Уточните: вас интересует архитектура, безопасность данных или интеграционные API?",
     risk: "Риски разделены на операционные, регуляторные и продуктовые. Какой сценарий разобрать детальнее?",
     audience: "Аудитория сегментирована по поведению и LTV. Уточните: фокус на B2C-пользователях или B2B-интеграторах?",
@@ -345,7 +349,7 @@ export function answer(question) {
   return fb;
 }
 
-// Экспорт состояния для отладки/мониторинга
+// Экспорт состояния для отладки
 export const getMemory = () => STATE;
 export const resetMemory = () => {
   STATE.history = [];
